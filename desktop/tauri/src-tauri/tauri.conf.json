@@ -1,0 +1,31 @@
+{
+  "productName": "MarketVision AI",
+  "version": "0.1.0",
+  "identifier": "com.marketvisionai.app",
+  "build": {
+    "devUrl": "http://localhost:5173",
+    "frontendDist": "../../../frontend/dist",
+    "beforeBuildCommand": "npm --prefix ../../frontend run build"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "MarketVision AI",
+        "width": 380,
+        "height": 480,
+        "resizable": true,
+        "transparent": true,
+        "decorations": false,
+        "alwaysOnTop": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["nsis"],
+    "icon": ["icons/icon.ico"],
+    "resources": {
+      "binaries/marketvision-backend/": "marketvision-backend/"
+    }
+  }
+}

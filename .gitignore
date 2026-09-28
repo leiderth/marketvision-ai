@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+.venv/
+*.db
+.env
+node_modules/
+dist/
+target/
+desktop/tauri/src-tauri/binaries/
+desktop/tauri/src-tauri/icons/icon.ico
+models/mlruns/
+models/registry/
+data/
+datasets/*.csv
