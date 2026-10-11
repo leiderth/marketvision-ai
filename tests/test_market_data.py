@@ -93,7 +93,7 @@ def test_status_and_latest_signal_expose_no_trade_without_provider():
     assert signal["signal"] == "NO_TRADE"
     assert signal["should_trade"] is False
     assert signal["market_regime"] == "unknown"
-    assert any("MARKET_DATA" in reason for reason in signal["reasons"])
+    assert any("feed externo está desactivado" in reason for reason in signal["reasons"])
     assert any("Calendario económico" in reason for reason in signal["reasons"])
     assert snapshot["type"] == "market_data"
     assert snapshot["status"]["connected"] is False

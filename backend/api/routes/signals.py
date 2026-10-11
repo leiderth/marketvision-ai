@@ -1,6 +1,7 @@
 """Read-only analytical candidate endpoint; it never authorizes execution."""
 from analysis.signal_engine import SignalEngine
 from fastapi import APIRouter, Request
+from ml.model_registry import MLModelManager
 from pydantic import BaseModel, Field
 
 router = APIRouter()
@@ -41,7 +42,13 @@ class SignalResponse(BaseModel):
 @router.get("/latest", response_model=SignalResponse)
 async def get_latest_signal(request: Request) -> dict:
     snapshot = request.app.state.market_data_manager.get_snapshot()
-    model_manager = request.app.state.ml_model_manager
+    return generate_signal_from_snapshot(snapshot, request.app.state.ml_model_manager)
+
+
+def generate_signal_from_snapshot(
+    snapshot: dict,
+    model_manager: MLModelManager,
+) -> dict:
     candles = snapshot.get("candles", [])
     latest_close = candles[-1].get("close") if candles else None
     values = snapshot.get("indicators", {}).get("values", {})

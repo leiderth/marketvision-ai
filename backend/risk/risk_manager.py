@@ -25,6 +25,8 @@ class RiskLimits:
     max_consecutive_losses: int
     max_trades_per_day: int
     paper_account_balance: float = 10_000.0
+    max_trades_per_hour: int = 5
+    max_daily_profit_pct: float = 5.0
 
     def __post_init__(self) -> None:
         if (
@@ -32,8 +34,11 @@ class RiskLimits:
             or not 0 < self.max_loss_per_trade_pct <= 100
             or not math.isfinite(self.max_daily_loss_pct)
             or not 0 < self.max_daily_loss_pct <= 100
+            or not math.isfinite(self.max_daily_profit_pct)
+            or not 0 <= self.max_daily_profit_pct <= 100
             or self.max_consecutive_losses <= 0
             or self.max_trades_per_day <= 0
+            or self.max_trades_per_hour <= 0
             or not math.isfinite(self.paper_account_balance)
             or self.paper_account_balance <= 0
         ):
@@ -46,6 +51,7 @@ class RiskState:
     trades_today: int = 0
     consecutive_losses: int = 0
     daily_pnl_pct: float = 0.0
+    trade_timestamps: list[str] = field(default_factory=list)
     trading_locked: bool = False
     lock_reason: str | None = None
 
@@ -69,6 +75,8 @@ class RiskManager:
             max_consecutive_losses=settings.risk_max_consecutive_losses,
             max_trades_per_day=settings.risk_max_trades_per_day,
             paper_account_balance=settings.risk_paper_account_balance,
+            max_trades_per_hour=settings.risk_max_trades_per_hour,
+            max_daily_profit_pct=settings.risk_max_daily_profit_pct,
         )
         self._state = RiskState()
         self._state_path = Path(state_path) if state_path is not None else None
@@ -78,14 +86,21 @@ class RiskManager:
         return asdict(self._limits)
 
     def get_state(self, *, now: datetime | None = None) -> dict:
-        self._roll_day(now or datetime.now(timezone.utc))
+        current_time = now or datetime.now(timezone.utc)
+        self._roll_day(current_time)
+        self._roll_hour(current_time)
         state = asdict(self._state)
         state["trading_day"] = self._state.trading_day.isoformat()
         return state
 
     def is_trading_allowed(self, *, now: datetime | None = None) -> bool:
-        self._roll_day(now or datetime.now(timezone.utc))
+        current_time = now or datetime.now(timezone.utc)
+        self._roll_day(current_time)
+        self._roll_hour(current_time)
         if self._state.trading_locked:
+            return False
+        if len(self._state.trade_timestamps) >= self._limits.max_trades_per_hour:
+            self.lock_trading("Límite de operaciones por hora alcanzado.")
             return False
         if self._state.trades_today >= self._limits.max_trades_per_day:
             self.lock_trading("Límite de operaciones diarias alcanzado.")
@@ -95,6 +110,7 @@ class RiskManager:
     def authorize_trade(self, amount: float, *, now: datetime | None = None) -> tuple[bool, str | None]:
         current_time = now or datetime.now(timezone.utc)
         self._roll_day(current_time)
+        self._roll_hour(current_time)
         if not self.is_trading_allowed(now=current_time):
             return False, self._state.lock_reason or "Operativa bloqueada por RiskManager."
         if (
@@ -117,11 +133,16 @@ class RiskManager:
         return True, None
 
     def register_trade(self, amount: float, *, now: datetime | None = None) -> tuple[bool, str | None]:
+        current_time = now or datetime.now(timezone.utc)
         allowed, reason = self.authorize_trade(amount, now=now)
         if not allowed:
             return False, reason
-        previous_state = replace(self._state)
+        previous_state = replace(
+            self._state,
+            trade_timestamps=list(self._state.trade_timestamps),
+        )
         self._state.trades_today += 1
+        self._state.trade_timestamps.append(current_time.isoformat())
         if self._state.trades_today >= self._limits.max_trades_per_day:
             self._state.trading_locked = True
             self._state.lock_reason = "Límite de operaciones diarias alcanzado."
@@ -148,7 +169,10 @@ class RiskManager:
             raise ValueError("El resultado de operación debe ser un porcentaje finito.")
         if pnl_pct < -self._limits.max_loss_per_trade_pct:
             raise ValueError("El resultado excede la pérdida máxima configurada por operación.")
-        previous_state = replace(self._state)
+        previous_state = replace(
+            self._state,
+            trade_timestamps=list(self._state.trade_timestamps),
+        )
         self._state.daily_pnl_pct += float(pnl_pct)
         if pnl_pct < 0:
             self._state.consecutive_losses += 1
@@ -157,6 +181,11 @@ class RiskManager:
 
         if self._state.daily_pnl_pct <= -self._limits.max_daily_loss_pct:
             self.lock_trading("Límite de pérdida diaria alcanzado.")
+        elif (
+            self._limits.max_daily_profit_pct > 0
+            and self._state.daily_pnl_pct >= self._limits.max_daily_profit_pct
+        ):
+            self.lock_trading("Objetivo de beneficio diario alcanzado.")
         elif self._state.consecutive_losses >= self._limits.max_consecutive_losses:
             self.lock_trading("Límite de pérdidas consecutivas alcanzado.")
         elif self._state.trades_today >= self._limits.max_trades_per_day:
@@ -209,6 +238,25 @@ class RiskManager:
             self._state = previous_state
             raise
 
+    def _roll_hour(self, now: datetime) -> None:
+        if now.tzinfo is None or now.utcoffset() is None:
+            raise ValueError("El reloj de RiskManager requiere zona horaria.")
+        cutoff = now.astimezone(timezone.utc).timestamp() - 3600
+        retained = [
+            timestamp
+            for timestamp in self._state.trade_timestamps
+            if datetime.fromisoformat(timestamp).astimezone(timezone.utc).timestamp() > cutoff
+        ]
+        if retained == self._state.trade_timestamps:
+            return
+        previous_state = replace(self._state, trade_timestamps=list(self._state.trade_timestamps))
+        self._state.trade_timestamps = retained
+        try:
+            self._save_state()
+        except OSError:
+            self._state = previous_state
+            raise
+
     def _load_state(self) -> None:
         if self._state_path is None or not self._state_path.exists():
             return
@@ -222,6 +270,13 @@ class RiskManager:
                 or isinstance(stored.get("consecutive_losses"), bool)
                 or not isinstance(stored.get("trading_locked"), bool)
                 or (
+                    "trade_timestamps" in stored
+                    and (
+                        not isinstance(stored["trade_timestamps"], list)
+                        or not all(isinstance(value, str) for value in stored["trade_timestamps"])
+                    )
+                )
+                or (
                     stored.get("lock_reason") is not None
                     and not isinstance(stored.get("lock_reason"), str)
                 )
@@ -233,9 +288,16 @@ class RiskManager:
                 trades_today=stored["trades_today"],
                 consecutive_losses=stored["consecutive_losses"],
                 daily_pnl_pct=float(stored["daily_pnl_pct"]),
+                trade_timestamps=stored.get("trade_timestamps", []),
                 trading_locked=bool(stored["trading_locked"]),
                 lock_reason=stored.get("lock_reason"),
             )
+            if any(
+                datetime.fromisoformat(timestamp).tzinfo is None
+                or datetime.fromisoformat(timestamp).utcoffset() is None
+                for timestamp in candidate.trade_timestamps
+            ):
+                raise ValueError("Timestamps inválidos en el estado de riesgo.")
         except (OSError, json.JSONDecodeError, KeyError, TypeError, ValueError) as exc:
             self._state.trading_locked = True
             self._state.lock_reason = f"Estado de riesgo persistido inválido ({type(exc).__name__})."

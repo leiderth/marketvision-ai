@@ -1,6 +1,6 @@
 {
   "productName": "MarketVision AI",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "identifier": "com.marketvisionai.app",
   "build": {
     "devUrl": "http://localhost:5173",
@@ -12,7 +12,7 @@
       {
         "title": "MarketVision AI",
         "width": 380,
-        "height": 480,
+        "height": 760,
         "resizable": true,
         "transparent": true,
         "decorations": false,
@@ -25,7 +25,8 @@
     "targets": ["nsis"],
     "icon": ["icons/icon.ico"],
     "resources": {
-      "binaries/marketvision-backend/": "marketvision-backend/"
+      "binaries/marketvision-backend/": "marketvision-backend/",
+      "binaries/tesseract/": "tesseract/"
     }
   }
 }

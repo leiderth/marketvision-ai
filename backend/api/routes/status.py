@@ -21,4 +21,5 @@ async def get_status(request: Request):
         "active_model_version": model_status["active_model_version"],
         "ml_model": model_status,
         "risk": request.app.state.risk_manager.get_state(),
+        "risk_limits": request.app.state.risk_manager.get_limits(),
     }

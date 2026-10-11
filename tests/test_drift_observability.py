@@ -4,8 +4,8 @@ from datetime import datetime, timedelta, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "backend"))
 
-from fastapi.testclient import TestClient
 from api.main import app
+from fastapi.testclient import TestClient
 from ml.drift import FeatureDriftMonitor
 from ml.schema import FEATURE_NAMES
 
@@ -79,3 +79,17 @@ def test_observability_endpoints_report_fail_closed_defaults():
     assert metrics.status_code == 200
     assert "marketvision_feed_connected 0" in metrics.text
     assert "marketvision_paper_mode 0" in metrics.text
+
+
+def test_tauri_windows_webview_origin_is_allowed_by_cors():
+    with TestClient(app) as client:
+        response = client.options(
+            "/api/status/",
+            headers={
+                "Origin": "http://tauri.localhost",
+                "Access-Control-Request-Method": "GET",
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.headers["access-control-allow-origin"] == "http://tauri.localhost"

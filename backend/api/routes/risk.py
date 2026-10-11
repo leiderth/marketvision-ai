@@ -1,8 +1,13 @@
 """Risk state, explicit paper-mode selection, kill switch and manual unlock."""
+import logging
+import sqlite3
+from datetime import datetime, timezone
+
 from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 
 @router.get("/limits")
@@ -37,6 +42,30 @@ def _require_local(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Dirección cliente inválida.") from exc
 
 
+def _stop_paper_execution(request: Request, reason: str) -> None:
+    autopilot = request.app.state.paper_autopilot
+    execution_manager = request.app.state.paper_execution_manager
+    open_positions = execution_manager.get_open_positions()
+    autopilot.stop(reason=reason)
+    execution_manager.kill_switch()
+    cancelled_at = datetime.now(timezone.utc).isoformat()
+    try:
+        for position in open_positions:
+            request.app.state.continuous_learning_manager.cancel_open_trade(
+                position["order_id"],
+                cancelled_at,
+            )
+    except (OSError, sqlite3.Error) as exc:
+        logger.exception(
+            "paper_trade_cancellation_persistence_failed",
+            extra={"reason": reason},
+        )
+        raise HTTPException(
+            status_code=500,
+            detail="Se detuvo paper trading, pero no se pudo guardar la cancelación.",
+        ) from exc
+
+
 @router.post("/paper-mode")
 async def set_paper_mode(body: PaperModeRequest, request: Request):
     _require_local(request)
@@ -48,7 +77,7 @@ async def set_paper_mode(body: PaperModeRequest, request: Request):
             detail="RiskManager mantiene el bloqueo. Requiere desbloqueo explícito por separado.",
         )
     if not body.enabled:
-        request.app.state.paper_execution_manager.kill_switch()
+        _stop_paper_execution(request, "paper_mode_disabled")
     request.app.state.current_mode = (
         "PAPER_TRADING_MODE" if body.enabled else "ANALYSIS_MODE"
     )
@@ -62,7 +91,7 @@ async def set_paper_mode(body: PaperModeRequest, request: Request):
 @router.post("/kill-switch")
 async def activate_kill_switch(request: Request):
     _require_local(request)
-    request.app.state.paper_execution_manager.kill_switch()
+    _stop_paper_execution(request, "kill_switch")
     request.app.state.current_mode = "ANALYSIS_MODE"
     return {
         "mode": request.app.state.current_mode,

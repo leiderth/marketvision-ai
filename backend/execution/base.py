@@ -3,7 +3,7 @@ Interfaz abstracta de ejecución. Ver README.md de este módulo: no hay
 implementación de ejecución real contra ningún bróker en este repositorio.
 """
 from abc import ABC, abstractmethod
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
@@ -14,6 +14,11 @@ class OrderRequest:
     expiration_seconds: int
     signal_confidence: float
     reasons: list[str]
+    timeframe: str = "1min"
+    indicator_snapshot: dict = field(default_factory=dict)
+    market_regime: str | None = None
+    strategy: str = "signal-engine"
+    model_version: str | None = None
 
 
 @dataclass

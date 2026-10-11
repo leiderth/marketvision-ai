@@ -41,10 +41,12 @@ def test_risk_manager_caps_order_size_tracks_loss_streak_and_persists_lock(tmp_p
     risk = manager(tmp_path, max_daily_loss_pct=5.0)
     paper = PaperExecutionManager(risk)
 
-    assert paper.submit_order(paper_order(amount=10)).status == "SIMULATED"
-    assert paper.submit_order(paper_order(amount=10)).status == "SIMULATED"
-    for order in paper.get_open_positions():
-        paper.settle_order(order["order_id"], -1)
+    first = paper.submit_order(paper_order(amount=10))
+    assert first.status == "SIMULATED"
+    paper.settle_order(first.order_id, -1)
+    second = paper.submit_order(paper_order(amount=10))
+    assert second.status == "SIMULATED"
+    paper.settle_order(second.order_id, -1)
 
     assert risk.is_trading_allowed() is False
     assert "consecutivas" in risk.get_state()["lock_reason"]
@@ -65,6 +67,20 @@ def test_daily_loss_max_and_explicit_unlock(tmp_path):
     assert risk.is_trading_allowed() is True
 
 
+def test_daily_profit_target_locks_trading_until_explicit_unlock(tmp_path):
+    risk = manager(tmp_path, max_daily_profit_pct=2.0)
+    risk.record_trade_result(1.0)
+    risk.record_trade_result(1.0)
+
+    state = risk.get_state()
+    assert state["daily_pnl_pct"] == 2.0
+    assert state["trading_locked"] is True
+    assert "beneficio diario" in state["lock_reason"]
+    assert risk.is_trading_allowed() is False
+    risk.unlock_trading()
+    assert risk.is_trading_allowed() is True
+
+
 def test_daily_rollover_does_not_silently_unlock_locked_risk(tmp_path):
     risk = manager(tmp_path)
     risk.lock_trading("manual stop")
@@ -78,6 +94,24 @@ def test_daily_rollover_does_not_silently_unlock_locked_risk(tmp_path):
     assert risk.is_trading_allowed(now=next_day) is False
 
 
+def test_hourly_trade_cap_locks_and_persists_until_explicit_unlock(tmp_path):
+    risk = manager(tmp_path, max_trades_per_hour=2)
+    paper = PaperExecutionManager(risk)
+
+    first = paper.submit_order(paper_order())
+    assert first.status == "SIMULATED"
+    paper.settle_order(first.order_id, 0.1)
+    second = paper.submit_order(paper_order())
+    assert second.status == "SIMULATED"
+    paper.settle_order(second.order_id, 0.1)
+    assert paper.submit_order(paper_order()).status == "REJECTED_BY_RISK_MANAGER"
+    assert "por hora" in risk.get_state()["lock_reason"]
+    assert RiskManager(
+        limits=RiskLimits(1, 5, 2, 10, 1000, max_trades_per_hour=2),
+        state_path=tmp_path / "risk.json",
+    ).is_trading_allowed() is False
+
+
 def test_paper_manager_rejects_invalid_order_and_kill_switch_clears_open_orders(tmp_path):
     risk = manager(tmp_path)
     paper = PaperExecutionManager(risk)
@@ -85,11 +119,20 @@ def test_paper_manager_rejects_invalid_order_and_kill_switch_clears_open_orders(
     assert paper.submit_order(paper_order(direction="HOLD")).status == "REJECTED_INVALID_ORDER"
     accepted = paper.submit_order(paper_order())
     assert accepted.status == "SIMULATED"
+    assert paper.submit_order(paper_order()).status == "REJECTED_OPEN_POSITION"
 
     paper.kill_switch()
 
     assert paper.get_open_positions() == []
     assert risk.is_trading_allowed() is False
+
+
+def test_paper_manager_allows_next_order_after_settlement(tmp_path):
+    paper = PaperExecutionManager(manager(tmp_path))
+    first = paper.submit_order(paper_order())
+    assert first.status == "SIMULATED"
+    paper.settle_order(first.order_id, 0.5)
+    assert paper.submit_order(paper_order()).status == "SIMULATED"
 
 
 def test_risk_state_corruption_locks_instead_of_resetting(tmp_path):

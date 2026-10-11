@@ -54,6 +54,9 @@ class Settings(BaseSettings):
     ml_active_model_version: str | None = None
     ml_min_confidence: float = Field(default=0.65, gt=0.5, le=1.0)
     ml_drift_state_dir: str = "./data/model_drift"
+    trade_database_path: str = "./data/trade_learning.sqlite3"
+    trade_dataset_path: str = "./data/paper_training.csv"
+    vision_capture_fps: int = Field(default=5, ge=1, le=15)
 
     notifications_enabled: bool = True
 
@@ -62,8 +65,10 @@ class Settings(BaseSettings):
 
     risk_max_loss_per_trade_pct: float = 1.0
     risk_max_daily_loss_pct: float = 5.0
+    risk_max_daily_profit_pct: float = Field(default=5.0, ge=0, le=100)
     risk_max_consecutive_losses: int = 3
     risk_max_trades_per_day: int = 20
+    risk_max_trades_per_hour: int = 5
     risk_paper_account_balance: float = Field(default=10_000.0, gt=0)
     risk_state_path: str = "./data/risk_state.json"
 
